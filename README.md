@@ -1,4 +1,4 @@
-# CustomP1UartComponent
+# esphome_p1
 
 Custom component for Home Assistant that uses SoftwareSerial instead of UART, this way no extra hardware is needed to invert the signal.
 Reads P1 from my KAIFA MA105C meter.
