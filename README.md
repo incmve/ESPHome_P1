@@ -7,8 +7,8 @@ Forked from https://github.com/nldroid/CustomP1UartComponent and customized for 
 ## Hardware
 
 I used a Nodemcu and nothing more, connect the RX pin to D5
-![nodemcu](https://raw.githubusercontent.com/incmve/ESPHome_P1/master/docs/nodemcu.jpg)
+![nodemcu](https://github.com/incmve/ESPHome_P1/blob/master/docs/nodemcu.jpg)
 
 ## Schema
-![Schema](https://raw.githubusercontent.com/incmve/ESPHome_P1/master/docs/RJ11-pinout.png)
+![Schema](https://github.com/incmve/ESPHome_P1/blob/master/docs/RJ11-pinout.png)
 
