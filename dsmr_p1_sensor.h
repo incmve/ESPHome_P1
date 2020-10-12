@@ -1,188 +1,263 @@
 #include "esphome.h"
-#include "dsmr.h"
+#include "SoftwareSerial.h"
 
-using namespace esphome;
+// * Baud rate for both hardware and software serial
+#define BAUD_RATE 115200
+#define SWSERIAL_BAUD_RATE 115200
 
-#define P1_MAXTELEGRAMLENGTH 1500
-#define DELAY_MS 60000 // Delay in miliseconds before reading another telegram
-#define WAIT_FOR_DATA_MS 2000
+// * Max telegram length
+#define P1_MAXLINELENGTH 75
 
-// Use data structure according to: https://github.com/matthijskooijman/arduino-dsmr
+// * P1 Meter RX pin
+#define P1_SERIAL_RX D5
 
-using MyData = ParsedData <
-  /* FixedValue */ energy_delivered_tariff1,
-  /* FixedValue */ energy_delivered_tariff2,
-  /* FixedValue */ energy_returned_tariff1,
-  /* FixedValue */ energy_returned_tariff2,
-  /* FixedValue */ power_delivered,
-  /* FixedValue */ power_returned,
-  /* FixedValue */ voltage_l1,
-  /* FixedValue */ voltage_l2,
-  /* FixedValue */ voltage_l3,
-  /* FixedValue */ current_l1,
-  /* FixedValue */ current_l2,
-  /* FixedValue */ current_l3,
-  /* FixedValue */ power_delivered_l1,
-  /* FixedValue */ power_delivered_l2,
-  /* FixedValue */ power_delivered_l3,
-  /* FixedValue */ power_returned_l1,
-  /* FixedValue */ power_returned_l2,
-  /* FixedValue */ power_returned_l3,
-  /* uint16_t */ gas_device_type,
-  /* uint8_t */ gas_valve_position,
-  /* TimestampedFixedValue */ gas_delivered
->;
+// * Initiate Software Serial
+SoftwareSerial p1_serial(P1_SERIAL_RX, -1, true, P1_MAXLINELENGTH); // (RX, TX, inverted, buffer)
 
-class CustomP1UartComponent : public Component, public uart::UARTDevice {
- protected:
-   char telegram[P1_MAXTELEGRAMLENGTH];
-   char c;
-   int telegramlen;
-   bool headerfound;
-   bool footerfound;
-   unsigned long lastread;
-   int bytes_read;
-  
-  bool data_available() {
-	// See if there's data available.
-	unsigned long currentMillis = millis();
-	unsigned long previousMillis = currentMillis; 
-  
-	while (currentMillis - previousMillis < WAIT_FOR_DATA_MS) { // wait in miliseconds
-		currentMillis = millis();
-		if (available()) {
-			return true;
-		}
-	}
-	return false;  
-  }  
-   
-  bool read_message() {
-	//ESP_LOGD("DmsrCustom","Read message");
-	headerfound = false;
-	footerfound = false;
-	telegramlen = 0;
-	bytes_read = 0;
-	unsigned long currentMillis = millis();
-	unsigned long previousMillis = currentMillis; 	
-	
-	if (available()) { // Check to be sure
-		// Messages come in batches. Read until footer.
-		while (!footerfound && currentMillis - previousMillis < 5000) { // Loop while there's no footer found with a maximum of 5 seconds
-			currentMillis = millis();
-			// Loop while there's data to read
-			while (available()) { // Loop while there's data 
-				if (telegramlen >= P1_MAXTELEGRAMLENGTH) {  // Buffer overflow
-					headerfound = false;
-					footerfound = false;
-					ESP_LOGD("DmsrCustom","Error: Message larger than buffer");
-				}
-				bytes_read++;
-				c = read();
-				if (c == 47) { // header: forward slash
-					// ESP_LOGD("DmsrCustom","Header found");
-					headerfound = true;
-					telegramlen = 0;
-				}
-				if (headerfound) {
-					telegram[telegramlen] = c;
-					telegramlen++;
-					if (c == 33) { // footer: exclamation mark
-						ESP_LOGD("DmsrCustom","Footer found");
-						footerfound = true;
-					} else {
-						if (footerfound && c == 10) { // last \n after footer
-							// Parse message
-							MyData data;
-							// ESP_LOGD("DmsrCustom","Trying to parse");
-							ParseResult<void> res = P1Parser::parse(&data, telegram, telegramlen, false); // Parse telegram accoring to data definition. Ignore unknown values.
-							if (res.err) {
-								// Parsing error, show it
-								Serial.println(res.fullError(telegram, telegram + telegramlen));
-							} else {
-								publish_sensors(data);
-								return true; // break out function
-							}
-						}	
-					}
-				} 
-			} // While data available	
-		} // !footerfound	
-	} 	
-	return false;	  
-  }
-
-  void publish_sensors(MyData data){
-	if(data.energy_delivered_tariff1_present)s_energy_delivered_tariff1->publish_state(data.energy_delivered_tariff1);
-	if(data.energy_delivered_tariff2_present)s_energy_delivered_tariff2->publish_state(data.energy_delivered_tariff2);
-	if(data.energy_returned_tariff1_present)s_energy_returned_tariff1->publish_state(data.energy_returned_tariff1);
-	if(data.energy_returned_tariff2_present)s_energy_returned_tariff2->publish_state(data.energy_returned_tariff2);
-	if(data.power_delivered_present)s_power_delivered->publish_state(data.power_delivered);
-	if(data.power_returned_present)s_power_returned->publish_state(data.power_returned);
-	if(data.voltage_l1_present)s_voltage_l1->publish_state(data.voltage_l1);
-	if(data.voltage_l2_present)s_voltage_l2->publish_state(data.voltage_l2);
-	if(data.voltage_l3_present)s_voltage_l3->publish_state(data.voltage_l3);
-	if(data.current_l1_present)s_current_l1->publish_state(data.current_l1);
-	if(data.current_l2_present)s_current_l2->publish_state(data.current_l2);
-	if(data.current_l3_present)s_current_l3->publish_state(data.current_l3);
-	if(data.power_delivered_l1_present)s_power_delivered_l1->publish_state(data.power_delivered_l1);
-	if(data.power_delivered_l2_present)s_power_delivered_l2->publish_state(data.power_delivered_l2);
-	if(data.power_delivered_l3_present)s_power_delivered_l3->publish_state(data.power_delivered_l3);
-	if(data.power_returned_l1_present)s_power_returned_l1->publish_state(data.power_returned_l1);
-	if(data.power_returned_l2_present)s_power_returned_l2->publish_state(data.power_returned_l2);
-	if(data.power_returned_l3_present)s_power_returned_l3->publish_state(data.power_returned_l3);
-	if(data.gas_device_type_present)s_gas_device_type->publish_state(data.gas_device_type);
-	if(data.gas_valve_position_present)s_gas_valve_position->publish_state(data.gas_valve_position);
-	if(data.gas_delivered_present)s_gas_delivered->publish_state(data.gas_delivered);
-  };  
-   
+class DsmrP1CustomSensor : public Component {
  public:
-  CustomP1UartComponent(UARTComponent *parent) : UARTDevice(parent) {}
-  Sensor *s_energy_delivered_tariff1 = new Sensor();
-  Sensor *s_energy_delivered_tariff2 = new Sensor();
-  Sensor *s_energy_returned_tariff1 = new Sensor();
-  Sensor *s_energy_returned_tariff2 = new Sensor();
-  Sensor *s_electricity_tariff = new Sensor();
-  Sensor *s_power_delivered = new Sensor();
-  Sensor *s_power_returned = new Sensor();
-  Sensor *s_electricity_threshold = new Sensor();
-  Sensor *s_voltage_l1 = new Sensor();
-  Sensor *s_voltage_l2 = new Sensor();
-  Sensor *s_voltage_l3 = new Sensor();
-  Sensor *s_current_l1 = new Sensor();
-  Sensor *s_current_l2 = new Sensor();
-  Sensor *s_current_l3 = new Sensor();
-  Sensor *s_power_delivered_l1 = new Sensor();
-  Sensor *s_power_delivered_l2 = new Sensor();
-  Sensor *s_power_delivered_l3 = new Sensor();
-  Sensor *s_power_returned_l1 = new Sensor();
-  Sensor *s_power_returned_l2 = new Sensor();
-  Sensor *s_power_returned_l3 = new Sensor();
-  Sensor *s_gas_device_type = new Sensor();
-  Sensor *s_gas_valve_position = new Sensor();
-  Sensor *s_gas_delivered = new Sensor(); 
+   // * Set to store received telegram
+  char telegram[P1_MAXLINELENGTH];
+
+  // * Set to store the data values read
+  long CONSUMPTION_LOW_TARIF;
+  long CONSUMPTION_HIGH_TARIF;
+  long RETURN_LOW_TARIF;
+  long RETURN_HIGH_TARIF;
+  long ACTUAL_CONSUMPTION;
+  long ACTUAL_RETURN;
+  long INSTANT_POWER_CURRENT;
+  long INSTANT_POWER_USAGE;
+  long GAS_METER_M3;
+
+  // Set to store data counters read
+  long ACTUAL_TARIF;
+  long SHORT_POWER_OUTAGES;
+  long LONG_POWER_OUTAGES;
+  long SHORT_POWER_DROPS;
+  long SHORT_POWER_PEAKS;
+ 
+  Sensor *consumption_low_tarif_sensor = new Sensor();
+  Sensor *consumption_high_tarif_sensor = new Sensor();
+  Sensor *return_low_tarif_sensor = new Sensor();
+  Sensor *return_high_tarif_sensor = new Sensor();
+  Sensor *actual_consumption_sensor = new Sensor();
+  Sensor *actual_return_sensor = new Sensor();
+  Sensor *instant_power_current_sensor = new Sensor();
+  Sensor *instant_power_usage_sensor = new Sensor();
+  Sensor *gas_meter_m3_sensor = new Sensor();
+  Sensor *actual_tarif_sensor = new Sensor();
+  Sensor *short_power_outages_sensor = new Sensor();
+  Sensor *long_power_outages_sensor = new Sensor();
+  Sensor *short_power_drops_sensor = new Sensor();
+  Sensor *short_power_peaks_sensor = new Sensor();
+
+  // DsmrP1CustomSensor() : PollingComponent(1000) { }
+  DsmrP1CustomSensor() {}
 
   void setup() override {
-    lastread = 0;
-	pinMode(D5, OUTPUT); // Set D5 as output pin
-	digitalWrite(D5,LOW); // Set low, don't request message from P1 port
+	  Serial.begin(BAUD_RATE);
+	
+    // * Start software serial for p1 meter
+    p1_serial.begin(SWSERIAL_BAUD_RATE);
+  }
+
+  void loop() override {
+		
+    if (p1_serial.available())
+    {
+      memset(telegram, 0, sizeof(telegram));
+
+      while (p1_serial.available())
+      {
+        ESP.wdtDisable();
+
+        int len = p1_serial.readBytesUntil('\n', telegram, P1_MAXLINELENGTH);
+        
+        // DSMR 2.2 is SERIAL 7E1 not 8N1, so a bitshift needs to take place in order to properly read data.
+        for (int cnt = 0; cnt < len; cnt++)
+          telegram[cnt] &= ~(1 << 7);	
+        
+        ESP.wdtEnable(1);
+
+        telegram[len] = '\n';
+        telegram[len + 1] = 0;
+        decode_telegram(len +1);
+      }
+	  }  
   }
   
-  void loop() override {
-	unsigned long now = millis();
-	
-	if (now - lastread > DELAY_MS || lastread == 0) {
-		lastread = now;
-		digitalWrite(D5,HIGH); // Set high, request new message from P1 port
-		if (data_available()) { // Check for x seconds if there's data available
-			bool have_message = read_message();
-			if (have_message) { 
-				digitalWrite(D5,LOW); // Set low, stop requesting messages from P1 port
-			} // If No message was read, keep output port high and retry later
-		} else {
-				ESP_LOGD("DmsrCustom","No data available. Is P1 port connected?");
-		}	
-	}
-  }	
+ private:
+  bool isNumber(char *res, int len)
+  {
+    for (int i = 0; i < len; i++)
+    {
+      if (((res[i] < '0') || (res[i] > '9')) && (res[i] != '.' && res[i] != 0))
+        return false;
+    }
+    return true;
+  }
+  
+  int FindCharInArrayRev(char array[], char c, int len)
+  {
+    for (int i = len - 1; i >= 0; i--)
+    {
+      if (array[i] == c)
+        return i;
+    }
+    return -1;
+  }
+  
+  long getValue(char *buffer, int maxlen, char startchar, char endchar)
+  {
+    int s = FindCharInArrayRev(buffer, startchar, maxlen - 2);
+    int l = FindCharInArrayRev(buffer, endchar, maxlen - 2) - s - 1;
+  
+    char res[16];
+    memset(res, 0, sizeof(res));
+  
+    if (strncpy(res, buffer + s + 1, l))
+    {
+      if (endchar == '*')
+      {
+        if (isNumber(res, l))
+          // * Lazy convert float to long
+          return (1000 * atof(res));
+      }
+      else if (endchar == ')')
+      {
+        if (isNumber(res, l))
+          return atof(res);
+      }
+    }
+    return 0;
+  }
+  
+  void decode_telegram(int len)
+  {
 
+/*
+  Sample DSMR2.2 message
+  /XMX5<secret>  <-- Landis + Gyr E350 ZCF120
+  0-0:96.1.1(123454323454323456543)
+  1-0:1.8.1(12451.666*kWh)
+  1-0:1.8.2(09539.696*kWh)
+  1-0:2.8.1(03008.444*kWh)
+  1-0:2.8.2(07401.746*kWh)
+  0-0:96.14.0(0002)
+  1-0:1.7.0(0000.61*kW)
+  1-0:2.7.0(0000.00*kW)
+  0-0:96.13.1()
+  0-0:96.13.0()
+  !
+*/
+    // 1-0:1.8.1(000992.992*kWh)
+    // 1-0:1.8.1 = Elektra verbruik laag tarief (DSMR v4.0)
+    if (strncmp(telegram, "1-0:1.8.1", strlen("1-0:1.8.1")) == 0)
+    {
+      CONSUMPTION_LOW_TARIF = getValue(telegram, len, '(', '*');
+      consumption_low_tarif_sensor->publish_state(CONSUMPTION_LOW_TARIF);
+    }
+  
+    // 1-0:1.8.2(000560.157*kWh)
+    // 1-0:1.8.2 = Elektra verbruik hoog tarief (DSMR v4.0)
+    if (strncmp(telegram, "1-0:1.8.2", strlen("1-0:1.8.2")) == 0)
+    {
+      CONSUMPTION_HIGH_TARIF = getValue(telegram, len, '(', '*');
+      consumption_high_tarif_sensor->publish_state(CONSUMPTION_HIGH_TARIF);
+    }
+
+    // 1-0:2.8.1(000992.992*kWh)
+    // 1-0:2.8.1 = Elektra teruglevering laag tarief (DSMR v4.0)
+    if (strncmp(telegram, "1-0:2.8.1", strlen("1-0:2.8.1")) == 0)
+    {
+      RETURN_LOW_TARIF = getValue(telegram, len, '(', '*');
+      return_low_tarif_sensor->publish_state(RETURN_LOW_TARIF);
+    }
+  
+    // 1-0:1.8.2(000560.157*kWh)
+    // 1-0:1.8.2 = Elektra teruglevering hoog tarief (DSMR v4.0)
+    if (strncmp(telegram, "1-0:2.8.2", strlen("1-0:2.8.2")) == 0)
+    {
+      RETURN_HIGH_TARIF = getValue(telegram, len, '(', '*');
+      return_high_tarif_sensor->publish_state(RETURN_HIGH_TARIF);
+    }
+
+    // 1-0:1.7.0(00.424*kW) Actueel verbruik
+    // 1-0:1.7.x = Electricity consumption actual usage (DSMR v4.0)
+    if (strncmp(telegram, "1-0:1.7.0", strlen("1-0:1.7.0")) == 0)
+    {
+      ACTUAL_CONSUMPTION = getValue(telegram, len, '(', '*');
+      actual_consumption_sensor->publish_state(ACTUAL_CONSUMPTION);
+    }
+
+    // 1-0:2.7.0(0000.00*kW)
+    // 1-0:2.7.0(0000.00*kW) Actuele teruglevering
+    if (strncmp(telegram, "1-0:2.7.0", strlen("1-0:2.7.0")) == 0)
+    {
+      ACTUAL_RETURN = getValue(telegram, len, '(', '*');
+      actual_return_sensor->publish_state(ACTUAL_RETURN);
+    }
+  
+    // 1-0:21.7.0(00.378*kW)
+    // 1-0:21.7.0 = Instantaan vermogen Elektriciteit levering
+    if (strncmp(telegram, "1-0:21.7.0", strlen("1-0:21.7.0")) == 0)
+    {
+      INSTANT_POWER_USAGE = getValue(telegram, len, '(', '*');
+      instant_power_current_sensor->publish_state(INSTANT_POWER_CURRENT);
+    }
+  
+    // 1-0:31.7.0(002*A)
+    // 1-0:31.7.0 = Instantane stroom Elektriciteit
+    if (strncmp(telegram, "1-0:31.7.0", strlen("1-0:31.7.0")) == 0)
+    {
+      INSTANT_POWER_CURRENT = getValue(telegram, len, '(', '*');
+      instant_power_usage_sensor->publish_state(INSTANT_POWER_USAGE);
+    }
+  
+    // 0-1:24.2.1(150531200000S)(00811.923*m3)
+    // 0-1:24.2.1 = Gas (DSMR v4.0) on Kaifa MA105 meter
+    if (strncmp(telegram, "0-1:24.2.1", strlen("0-1:24.2.1")) == 0)
+    {
+      GAS_METER_M3 = getValue(telegram, len, '(', '*');
+      gas_meter_m3_sensor->publish_state(GAS_METER_M3);
+    }
+  
+    // 0-0:96.14.0(0001)
+    // 0-0:96.14.0 = Actual Tarif
+    if (strncmp(telegram, "0-0:96.14.0", strlen("0-0:96.14.0")) == 0)
+    {
+      ACTUAL_TARIF = getValue(telegram, len, '(', ')');
+      actual_tarif_sensor->publish_state(ACTUAL_TARIF);
+    }
+  
+    // 0-0:96.7.21(00003)
+    // 0-0:96.7.21 = Aantal onderbrekingen Elektriciteit
+    if (strncmp(telegram, "0-0:96.7.21", strlen("0-0:96.7.21")) == 0)
+    {
+      SHORT_POWER_OUTAGES = getValue(telegram, len, '(', ')');
+    }
+  
+    // 0-0:96.7.9(00001)
+    // 0-0:96.7.9 = Aantal lange onderbrekingen Elektriciteit
+    if (strncmp(telegram, "0-0:96.7.9", strlen("0-0:96.7.9")) == 0)
+    {
+      LONG_POWER_OUTAGES = getValue(telegram, len, '(', ')');
+    }
+  
+    // 1-0:32.32.0(00000)
+    // 1-0:32.32.0 = Aantal korte spanningsdalingen Elektriciteit in fase 1
+    if (strncmp(telegram, "1-0:32.32.0", strlen("1-0:32.32.0")) == 0)
+    {
+      SHORT_POWER_DROPS = getValue(telegram, len, '(', ')');
+    }
+  
+    // 1-0:32.36.0(00000)
+    // 1-0:32.36.0 = Aantal korte spanningsstijgingen Elektriciteit in fase 1
+    if (strncmp(telegram, "1-0:32.36.0", strlen("1-0:32.36.0")) == 0)
+    {
+      SHORT_POWER_PEAKS = getValue(telegram, len, '(', ')');
+    }
+  } 
+  
 };
